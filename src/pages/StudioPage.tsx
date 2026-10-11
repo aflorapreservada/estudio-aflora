@@ -135,37 +135,41 @@ export function StudioPage({ editingPeca, onClearEditing }: StudioPageProps) {
 
   // Load existing peca for editing
 
-  useEffect(() => {
+  // Load existing peca for editing
+useEffect(() => {
+  let cancelled = false;
 
-    if (editingPeca) {
+  if (!editingPeca) return;
 
-      setSavedPeca(editingPeca);
+  const carregarPeca = async () => {
+    setSavedPeca(editingPeca);
 
-      setPecaData({
+    const fotoUrl = editingPeca.foto_original_url;
 
-        nome: editingPeca.nome, tipo: editingPeca.tipo,
+    if (cancelled) return;
 
-        dimensoes: editingPeca.dimensoes, material: editingPeca.material,
+    setPecaData({
+      nome: editingPeca.nome,
+      tipo: editingPeca.tipo,
+      dimensoes: editingPeca.dimensoes,
+      material: editingPeca.material,
+      cordao_tipo: editingPeca.cordao_tipo,
+      cordao_comprimento: editingPeca.cordao_comprimento,
+      observacoes: editingPeca.observacoes,
+      foto_original_path: editingPeca.foto_original_path,
+      foto_original_url: fotoUrl,
+    });
 
-        cordao_tipo: editingPeca.cordao_tipo, cordao_comprimento: editingPeca.cordao_comprimento,
+    setCurrentStep(1);
+    loadGeracoes(editingPeca.id);
+  };
 
-        observacoes: editingPeca.observacoes,
+  carregarPeca();
 
-        foto_original_path: editingPeca.foto_original_path,
-
-        foto_original_url: editingPeca.foto_original_url,
-
-      });
-
-      setCurrentStep(1);
-
-      loadGeracoes(editingPeca.id);
-
-    }
-
-  }, [editingPeca]);
-
-
+  return () => {
+    cancelled = true;
+  };
+}, [editingPeca]);
 
   // Load gabaritos and modelos on mount
 
@@ -269,7 +273,7 @@ export function StudioPage({ editingPeca, onClearEditing }: StudioPageProps) {
 
   const loadModelos = async () => {
 
-    const { data } = await supabase
+    const { data, error } = await supabase
 
       .from('modelos')
 
@@ -279,6 +283,7 @@ export function StudioPage({ editingPeca, onClearEditing }: StudioPageProps) {
 
       .order('criada_em', { ascending: true });
 
+    if (error) console.error('Erro ao carregar modelos:', error);
     if (data) setModelos(data);
 
   };
@@ -286,21 +291,21 @@ export function StudioPage({ editingPeca, onClearEditing }: StudioPageProps) {
 
 
   const loadGeracoes = async (pecaId: string) => {
+  const { data, error } = await supabase
+    .from('geracoes')
+    .select('*')
+    .eq('peca_id', pecaId)
+    .order('criada_em', { ascending: false });
 
-    const { data } = await supabase
+  if (error) {
+    console.error('Erro ao carregar gerações:', error);
+    return;
+  }
 
-      .from('geracoes')
+  if (!data) return;
 
-      .select('*')
-
-      .eq('peca_id', pecaId)
-
-      .order('criada_em', { ascending: false });
-
-    if (data) setGeracoes(data);
-
-  };
-
+  setGeracoes(data);
+};
 
 
   // Save peca to DB
@@ -327,7 +332,7 @@ export function StudioPage({ editingPeca, onClearEditing }: StudioPageProps) {
 
           foto_original_path: pecaData.foto_original_path,
 
-          foto_original_url: pecaData.foto_original_url,
+          foto_original_url: pecaData.foto_original_path ? null : pecaData.foto_original_url,
 
         })
 
@@ -349,7 +354,7 @@ export function StudioPage({ editingPeca, onClearEditing }: StudioPageProps) {
 
       .from('pecas')
 
-      .insert({ ...pecaData })
+      .insert({ ...pecaData, user_id: user.id, foto_original_url: pecaData.foto_original_path ? null : pecaData.foto_original_url })
 
       .select()
 
@@ -535,14 +540,13 @@ export function StudioPage({ editingPeca, onClearEditing }: StudioPageProps) {
 
     // Call edge function
 
+    try {
     const { data: { session }, error: sessionError } =
   await supabase.auth.getSession();
 
 if (sessionError || !session?.access_token) {
   throw new Error('Sessão expirada. Faça login novamente.');
 }
-
-    try {
 
       const response = await fetch(
 
@@ -561,7 +565,7 @@ if (sessionError || !session?.access_token) {
     pecaId: peca.id,
     geracaoId: genRecord.id,
     tipoGeracao: tipo,
-    fotoOriginalUrl: peca.foto_original_url,
+    fotoOriginalPath: peca.foto_original_path,
     pecaNome: peca.nome,
     pecaTipo: peca.tipo,
     pecaDimensoes: peca.dimensoes,
@@ -583,7 +587,7 @@ if (sessionError || !session?.access_token) {
       genero: modelo.genero,
       descricao: modelo.descricao,
       tom_pele: modelo.tom_pele,
-      retratoUrl: modelo.retrato_url,
+      id: modelo.id,
     } : null,
   }),
 }
@@ -601,38 +605,13 @@ if (sessionError || !session?.access_token) {
 
 
 
-      // Update generation with result
-
-      const { data: updated } = await supabase
-
-        .from('geracoes')
-
-        .update({
-
-          status: 'concluida',
-
-          imagem_path: result.imagemPath ?? null,
-
-          imagem_url: result.imagemUrl ?? null,
-
-          prompt_usado: result.prompt ?? null,
-
-          modelo_ia: result.modelo ?? null,
-
-        })
-
-        .eq('id', genRecord.id)
-
-        .select()
-
-        .maybeSingle();
-
-
-
-      if (updated) {
-
+      // The Edge Function persists the path even if this tab is closed.
+      const { data: updated, error: reloadError } = await supabase
+        .from('geracoes').select('*').eq('id', genRecord.id).single();
+      if (reloadError) {
+        setGenerateError('Imagem gerada e salva. Reabra a peça para carregar o resultado.');
+      } else if (updated) {
         setGeracoes((prev) => [updated, ...prev]);
-
       }
 
     } catch (err) {
@@ -645,7 +624,7 @@ if (sessionError || !session?.access_token) {
 
         .update({ status: 'erro', erro_mensagem: errMsg })
 
-        .eq('id', genRecord.id);
+        .eq('id', genRecord.id).eq('status', 'processando');
 
 
 
@@ -737,7 +716,7 @@ if (sessionError || !session?.access_token) {
 
 
 
-  const hasFoto = !!pecaData.foto_original_url;
+  const hasFoto = !!(pecaData.foto_original_path || pecaData.foto_original_url);
 
   const hasNome = !!pecaData.nome.trim();
 

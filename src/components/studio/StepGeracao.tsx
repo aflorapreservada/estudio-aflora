@@ -1,4 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useStorageImage } from '@/hooks/useStorageImage';
+import { resolveImageUrl } from '@/lib/storage';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Sparkles,
   Loader2,
@@ -8,13 +10,12 @@ import {
   Tag,
   Image as ImageIcon,
   AlertCircle,
-  Check,
-  RefreshCw,
 } from 'lucide-react';
 import type { Geracao, Peca } from '@/types';
 import { CENARIOS } from '@/types';
 import {
   renderImageWithLabel,
+  drawLabel,
   downloadBlob,
   sanitizeFilename,
   type LabelData,
@@ -193,17 +194,18 @@ function GeracaoGroup({
 }
 
 function GeracaoCard({ geracao, peca }: { geracao: Geracao; peca: Peca | null }) {
+  const image = useStorageImage('geracoes-imagens', geracao.imagem_path, geracao.imagem_url);
   const [showLabel, setShowLabel] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [labeledUrl, setLabeledUrl] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  const labelData: LabelData = {
+  const labelData: LabelData = useMemo(() => ({
     nome: peca?.nome ?? '',
     tipo: peca?.tipo ?? '',
     medidas: peca?.dimensoes ?? '',
     cordao: [peca?.cordao_tipo, peca?.cordao_comprimento].filter(Boolean).join(' · ') ?? '',
-  };
+  }), [peca?.nome, peca?.tipo, peca?.dimensoes, peca?.cordao_tipo, peca?.cordao_comprimento]);
 
   const cenarioLabel = CENARIOS.find((c) => c.value === geracao.cenario)?.label ?? geracao.cenario;
   const dataFormatada = new Date(geracao.criada_em).toLocaleDateString('pt-BR', {
@@ -215,30 +217,39 @@ function GeracaoCard({ geracao, peca }: { geracao: Geracao; peca: Peca | null })
 
   // Render label overlay on canvas for preview
   useEffect(() => {
-    if (!geracao.imagem_url || !canvasRef.current) return;
+    setLabeledUrl(null);
+    if (!image.url || !canvasRef.current) return;
+    let active = true;
+    let objectUrl: string | null = null;
+    setLabeledUrl(null);
     const canvas = canvasRef.current;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
+      if (!active) return;
       canvas.width = img.naturalWidth;
       canvas.height = img.naturalHeight;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.drawImage(img, 0, 0);
       if (showLabel) {
-        drawLabelOnCanvas(ctx, canvas.width, canvas.height, labelData);
+        drawLabel(ctx, canvas.width, canvas.height, labelData);
       }
       canvas.toBlob((blob) => {
-        if (blob) setLabeledUrl(URL.createObjectURL(blob));
+        if (blob && active) { objectUrl = URL.createObjectURL(blob); setLabeledUrl(objectUrl); }
       }, 'image/png');
     };
-    img.src = geracao.imagem_url;
-  }, [geracao.imagem_url, showLabel, labelData.nome, labelData.tipo, labelData.medidas, labelData.cordao]);
+    img.onerror = image.onError;
+    img.src = image.url;
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [image.url, image.onError, showLabel, labelData]);
 
   const handleDownload = async (withLabel: boolean, format: 'png' | 'jpeg') => {
-    if (!geracao.imagem_url || !peca) return;
+    if (!image.url || !peca) return;
     setDownloading(true);
-    const blob = await renderImageWithLabel(geracao.imagem_url, labelData, {
+    try {
+    const freshUrl = await resolveImageUrl('geracoes-imagens', geracao.imagem_path, geracao.imagem_url);
+    const blob = await renderImageWithLabel(freshUrl, labelData, {
       showLabel: withLabel,
       format,
     });
@@ -248,7 +259,7 @@ function GeracaoCard({ geracao, peca }: { geracao: Geracao; peca: Peca | null })
       const labelSuffix = withLabel ? 'com-etiqueta' : 'sem-etiqueta';
       downloadBlob(blob, `${baseName}-${suffix}-${labelSuffix}.${format}`);
     }
-    setDownloading(false);
+    } catch { image.onError(); } finally { setDownloading(false); }
   };
 
   if (geracao.status === 'pendente' || geracao.status === 'processando') {
@@ -282,9 +293,10 @@ function GeracaoCard({ geracao, peca }: { geracao: Geracao; peca: Peca | null })
       <div className="relative bg-sand-100 overflow-hidden">
         {labeledUrl && showLabel ? (
           <img src={labeledUrl} alt="Resultado" className="w-full h-auto object-contain max-h-[500px]" />
-        ) : geracao.imagem_url ? (
-          <img src={geracao.imagem_url} alt="Resultado" className="w-full h-auto object-contain max-h-[500px]" />
+        ) : image.url ? (
+          <img onError={image.onError} src={image.url} alt="Resultado" className="w-full h-auto object-contain max-h-[500px]" />
         ) : null}
+        {image.error && <p role="alert" className="text-xs text-red-700">{image.error}</p>}
         <canvas ref={canvasRef} className="hidden" />
       </div>
 
@@ -335,70 +347,4 @@ function GeracaoCard({ geracao, peca }: { geracao: Geracao; peca: Peca | null })
       </div>
     </div>
   );
-}
-
-function drawLabelOnCanvas(
-  ctx: CanvasRenderingContext2D,
-  canvasW: number,
-  canvasH: number,
-  label: LabelData
-) {
-  const scale = canvasW / 1024;
-  const margin = 38 * scale;
-  const titleSize = 23 * scale;
-  const bodySize = 15 * scale;
-  const lineHeight = 23 * scale;
-
-  const lines = [
-    { text: label.nome, size: titleSize, title: true },
-    ...(label.tipo
-      ? [{ text: label.tipo, size: bodySize, title: false }]
-      : []),
-    ...(label.medidas
-      ? [{ text: `Medidas: ${label.medidas}`, size: bodySize, title: false }]
-      : []),
-    ...(label.cordao
-      ? [{ text: `Cordão: ${label.cordao}`, size: bodySize, title: false }]
-      : []),
-  ].filter(line => line.text.trim());
-
-  if (!lines.length) return;
-
-  const totalHeight =
-    titleSize +
-    Math.max(0, lines.length - 1) * lineHeight +
-    8 * scale;
-
-  const startX = margin;
-  let cursorY = canvasH - margin - totalHeight;
-
-  ctx.save();
-
-  ctx.fillStyle = '#ffffff';
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'top';
-
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
-  ctx.shadowBlur = 5 * scale;
-  ctx.shadowOffsetX = 1 * scale;
-  ctx.shadowOffsetY = 2 * scale;
-
-  for (const line of lines) {
-    ctx.font = line.title
-      ? `300 ${line.size}px Futura, "Century Gothic", Arial, sans-serif`
-      : `300 ${line.size}px Futura, "Century Gothic", Arial, sans-serif`;
-
-    ctx.fillText(
-      line.text,
-      startX,
-      cursorY,
-      canvasW - margin * 2
-    );
-
-    cursorY += line.title
-      ? 32 * scale
-      : lineHeight;
-  }
-
-  ctx.restore();
 }

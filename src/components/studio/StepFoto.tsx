@@ -1,4 +1,5 @@
-import { Camera, Upload, X, RefreshCw } from 'lucide-react';
+import { StorageImage } from '@/components/StorageImage';
+import { Upload, X, RefreshCw } from 'lucide-react';
 import { useRef, useState } from 'react';
 
 interface StepFotoProps {
@@ -11,13 +12,14 @@ interface StepFotoProps {
 export function StepFoto({ fotoUrl, fotoPath, onUpload, onClear }: StepFotoProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const [uploadError, setUploadError] = useState('');
   const [uploading, setUploading] = useState(false);
 
   const handleFile = async (file: File) => {
     if (!file.type.startsWith('image/')) return;
+    setUploadError('');
     setUploading(true);
-    await onUpload(file);
-    setUploading(false);
+    try { await onUpload(file); } catch (error) { setUploadError(error instanceof Error ? error.message : 'Erro ao enviar fotografia.'); } finally { setUploading(false); }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -36,11 +38,11 @@ export function StepFoto({ fotoUrl, fotoPath, onUpload, onClear }: StepFotoProps
         </p>
       </div>
 
-      {fotoUrl ? (
+      {fotoPath || fotoUrl ? (
         <div className="space-y-4">
           <div className="relative inline-block">
-            <img
-              src={fotoUrl}
+            <StorageImage
+              bucket="pecas-fotos" path={fotoPath} legacyUrl={fotoUrl}
               alt="Foto original da peça"
               className="max-h-96 rounded-sm border border-clay-200 object-contain"
             />
@@ -91,6 +93,7 @@ export function StepFoto({ fotoUrl, fotoPath, onUpload, onClear }: StepFotoProps
         </div>
       )}
 
+      {uploadError && <p role="alert" className="text-sm text-red-700">{uploadError}</p>}
       <input
         ref={inputRef}
         type="file"

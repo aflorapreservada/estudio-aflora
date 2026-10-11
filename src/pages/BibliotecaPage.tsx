@@ -1,3 +1,4 @@
+import { StorageImage } from '@/components/StorageImage';
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,7 +11,6 @@ import {
   Calendar,
   Trash2,
   Plus,
-  Filter,
 } from 'lucide-react';
 
 interface BibliotecaPageProps {
@@ -159,8 +159,8 @@ export function BibliotecaPage({ onEditPeca, onNewPeca }: BibliotecaPageProps) {
                 <div className="flex items-center gap-4 p-4">
                   {/* Thumbnail */}
                   <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-sm bg-sand-100 overflow-hidden shrink-0">
-                    {peca.foto_original_url ? (
-                      <img src={peca.foto_original_url} alt={peca.nome} className="w-full h-full object-cover" />
+                    {(peca.foto_original_path || peca.foto_original_url) ? (
+                      <StorageImage bucket="pecas-fotos" path={peca.foto_original_path} legacyUrl={peca.foto_original_url} alt={peca.nome} className="w-full h-full object-cover" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center">
                         <Images className="w-6 h-6 text-clay-300" />
@@ -195,7 +195,7 @@ export function BibliotecaPage({ onEditPeca, onNewPeca }: BibliotecaPageProps) {
                       Abrir <ChevronRight className="w-3.5 h-3.5" />
                     </button>
                     <button
-                      onClick={() => setExpanded(expanded ? null : peca.id)}
+                      onClick={() => setExpandedId(expanded ? null : peca.id)}
                       className="btn-ghost text-xs"
                     >
                       {pecaGeracoes.length > 0 ? `${pecaGeracoes.length} versões` : ''}
@@ -218,8 +218,8 @@ export function BibliotecaPage({ onEditPeca, onNewPeca }: BibliotecaPageProps) {
                       {pecaGeracoes.map((g) => (
                         <div key={g.id} className="text-center">
                           <div className="aspect-square bg-sand-100 rounded-sm overflow-hidden mb-1">
-                            {g.imagem_url && g.status === 'concluida' ? (
-                              <img src={g.imagem_url} alt="" className="w-full h-full object-cover" />
+                            {(g.imagem_path || g.imagem_url) && g.status === 'concluida' ? (
+                              <StorageImage bucket="geracoes-imagens" path={g.imagem_path} legacyUrl={g.imagem_url} alt="" className="w-full h-full object-cover" />
                             ) : g.status === 'erro' ? (
                               <div className="w-full h-full flex items-center justify-center text-red-400 text-xs">
                                 Erro

@@ -1,3 +1,5 @@
+import { storageReference } from "../_shared/storage-path.ts";
+import { appendImageReferences } from "../_shared/image-references.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.57.4";
 
 const corsHeaders = {
@@ -10,7 +12,7 @@ interface GenerateRequest {
   pecaId: string;
   geracaoId: string;
   tipoGeracao: "editorial" | "modelo";
-  fotoOriginalUrl: string | null;
+  fotoOriginalPath?: string | null;
   pecaNome: string;
   pecaTipo: string;
   pecaDimensoes: string;
@@ -30,7 +32,7 @@ interface GenerateRequest {
     genero: string;
     descricao: string;
     tom_pele: string;
-    retratoUrl: string | null;
+    id: string;
   } | null;
 }
 
@@ -145,18 +147,23 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    if (!body.fotoOriginalUrl) {
-      return new Response(
-        JSON.stringify({ error: "Fotografia original é obrigatória." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    // User-scoped queries validate ownership before any service-role upload.
+    const { data: peca, error: pecaError } = await supabaseAnon.from("pecas").select("*").eq("id", body.pecaId).eq("user_id", user.id).single();
+    const { data: geracao, error: geracaoError } = await supabaseAnon.from("geracoes").select("*").eq("id", body.geracaoId).eq("peca_id", body.pecaId).eq("user_id", user.id).single();
+    if (pecaError || geracaoError || !peca || !geracao || geracao.status !== "processando" || geracao.tipo_geracao !== body.tipoGeracao) {
+      return new Response(JSON.stringify({ error: "Peça ou geração não autorizada." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
-
-    if (body.tipoGeracao === "modelo" && !body.modelo) {
-      return new Response(
-        JSON.stringify({ error: "Selecione um modelo para gerar a fotografia com modelo." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    const originalRef = storageReference(peca.foto_original_path, "pecas-fotos", supabaseUrl)
+      ?? storageReference(peca.foto_original_url, "pecas-fotos", supabaseUrl);
+    if (!originalRef || originalRef.bucket !== "pecas-fotos") throw new Error("Fotografia original sem caminho válido no Storage.");
+    let modeloRef: ReturnType<typeof storageReference> = null;
+    if (body.tipoGeracao === "modelo") {
+      const { data: modelo, error } = await supabaseAnon.from("modelos").select("*").eq("id", geracao.modelo_id).single();
+      if (error || !modelo) throw new Error("Modelo não autorizado ou inexistente.");
+      body.modelo = { ...modelo, id: modelo.id };
+      modeloRef = storageReference(modelo.retrato_path, "modelos-referencias", supabaseUrl)
+        ?? storageReference(modelo.retrato_url, "modelos-referencias", supabaseUrl);
+      if (!modeloRef || modeloRef.bucket !== "modelos-referencias") throw new Error("Modelo sem caminho de retrato válido.");
     }
 
     // Get OpenAI API key from environment
@@ -180,42 +187,23 @@ Deno.serve(async (req: Request) => {
         ? buildPromptEditorial(body)
         : buildPromptModelo(body);
 
-    // Fetch the original photo as a File for the API
-    const fotoResponse = await fetch(body.fotoOriginalUrl);
-    if (!fotoResponse.ok) {
-      return new Response(
-        JSON.stringify({ error: "Não foi possível carregar a fotografia original." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    const fotoBlob = await fotoResponse.blob();
+    const { data: fotoBlob, error: fotoError } = await supabaseAnon.storage.from(originalRef.bucket).download(originalRef.path);
+    if (fotoError || !fotoBlob) throw new Error(`Erro ao carregar original: ${fotoError?.message}`);
     const fotoFile = new File([fotoBlob], "original.jpg", { type: fotoBlob.type || "image/jpeg" });
-
-    // If modelo has a retrato, include it as a second reference
     let modeloFile: File | null = null;
-    if (body.modelo?.retratoUrl) {
-      try {
-        const retratoResp = await fetch(body.modelo.retratoUrl);
-        if (retratoResp.ok) {
-          const retratoBlob = await retratoResp.blob();
-          modeloFile = new File([retratoBlob], "modelo.jpg", { type: retratoBlob.type || "image/jpeg" });
-        }
-      } catch {
-        // retrato is optional, continue without it
-      }
+    if (modeloRef) {
+      const { data: retrato, error } = await supabaseAnon.storage.from(modeloRef.bucket).download(modeloRef.path);
+      if (error || !retrato) throw new Error(`Erro ao carregar retrato: ${error?.message}`);
+      modeloFile = new File([retrato], "modelo.jpg", { type: retrato.type || "image/jpeg" });
     }
 
     // Call OpenAI Images API (edit endpoint with reference images)
     const formData = new FormData();
     formData.append("model", imageModel);
     formData.append("prompt", prompt);
-    formData.append("image", fotoFile);
+    appendImageReferences(formData, fotoFile, modeloFile);
     formData.append("n", "1");
     formData.append("size", "1024x1024");
-
-    if (modeloFile) {
-      formData.append("image", modeloFile);
-    }
 
     const openaiResponse = await fetch("https://api.openai.com/v1/images/edits", {
       method: "POST",
@@ -261,6 +249,7 @@ Deno.serve(async (req: Request) => {
       imageBlob = new Blob([bytes], { type: "image/png" });
     } else if (imageData.url) {
       const imgResp = await fetch(imageData.url);
+      if (!imgResp.ok) throw new Error("Falha ao recuperar imagem gerada.");
       imageBlob = await imgResp.blob();
     } else {
       return new Response(
@@ -274,7 +263,7 @@ Deno.serve(async (req: Request) => {
     const storagePath = `${user.id}/${body.pecaId}/${Date.now()}-gerada.png`;
 
     const { error: uploadError } = await supabaseService.storage
-      .from("pecas-fotos")
+      .from("geracoes-imagens")
       .upload(storagePath, imageBlob, {
         contentType: "image/png",
         upsert: false,
@@ -287,11 +276,13 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Create signed URL (1 year)
-    const { data: signedUrlData } = await supabaseService.storage
-      .from("pecas-fotos")
-      .createSignedUrl(storagePath, 60 * 60 * 24 * 365);
-
+    // Persist the permanent path server-side before returning to the browser.
+    const { error: saveError } = await supabaseAnon.from("geracoes").update({
+      status: "concluida", imagem_path: storagePath, imagem_url: null,
+      prompt_usado: prompt, modelo_ia: imageModel, erro_mensagem: null,
+    }).eq("id", geracao.id).eq("user_id", user.id);
+    if (saveError) throw new Error(`Imagem armazenada em ${storagePath}, mas falhou o registro: ${saveError.message}`);
+    const { data: signedUrlData } = await supabaseAnon.storage.from("geracoes-imagens").createSignedUrl(storagePath, 3600);
     const imageUrl = signedUrlData?.signedUrl ?? null;
 
     return new Response(

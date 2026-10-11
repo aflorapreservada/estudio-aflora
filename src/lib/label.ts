@@ -5,9 +5,6 @@ export interface LabelData {
   cordao: string;
 }
 
-const LABEL_BG = '#786554';
-const LABEL_TEXT = '#ffffff';
-
 export async function renderImageWithLabel(
   imageUrl: string,
   label: LabelData,
@@ -31,7 +28,7 @@ export async function renderImageWithLabel(
 
       ctx.drawImage(img, 0, 0);
 
-      if (showLabel && label.nome) {
+      if (showLabel) {
         drawLabel(ctx, canvas.width, canvas.height, label);
       }
 
@@ -46,44 +43,44 @@ export async function renderImageWithLabel(
   });
 }
 
-function drawLabel(
+export function drawLabel(
   ctx: CanvasRenderingContext2D,
   canvasW: number,
   canvasH: number,
   label: LabelData
 ) {
-  const scale = canvasW / 1024;
-  const padding = 24 * scale;
-  const lineHeight = 20 * scale;
-  const titleSize = 24 * scale;
-  const bodySize = 14 * scale;
+  const scale = Math.min(canvasW, canvasH) / 1024;
+  const margin = 20 * scale;
+  const titleSize = 22 * scale;
+  const bodySize = 13 * scale;
+  const gap = 4 * scale;
+  const lines = [
+    { text: label.nome.trim(), size: titleSize, weight: '600' },
+    { text: label.tipo.trim(), size: bodySize, weight: '400' },
+    { text: label.medidas.trim(), size: bodySize, weight: '400' },
+  ].filter(line => line.text);
+  if (!lines.length) return;
 
-  const lines: { text: string; size: number; uppercase: boolean }[] = [
-    { text: label.nome, size: titleSize, uppercase: true },
-  ];
+  const totalHeight = lines.reduce((height, line) => height + line.size, 0)
+    + gap * (lines.length - 1);
+  let cursorY = canvasH - margin - totalHeight;
+  const maxWidth = Math.min(340 * scale, canvasW - margin * 2);
 
-  if (label.tipo) lines.push({ text: label.tipo, size: bodySize, uppercase: false });
-  if (label.medidas) lines.push({ text: `Medidas: ${label.medidas}`, size: bodySize, uppercase: false });
-  if (label.cordao) lines.push({ text: `Cordão: ${label.cordao}`, size: bodySize, uppercase: false });
-
-  const labelHeight = padding * 2 + lineHeight * lines.length;
-  const labelY = canvasH - labelHeight;
-  const labelWidth = Math.min(canvasW * 0.5, 460 * scale);
-  const labelX = canvasW - labelWidth - padding;
-
-  ctx.fillStyle = LABEL_BG;
-  ctx.fillRect(labelX, labelY, labelWidth, labelHeight);
-
-  ctx.fillStyle = LABEL_TEXT;
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'right';
   ctx.textBaseline = 'top';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.55)';
+  ctx.shadowBlur = 2 * scale;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = 1 * scale;
 
-  let cursorY = labelY + padding;
   for (const line of lines) {
-    ctx.font = `${line.uppercase ? 'bold' : 'normal'} ${line.size}px Inter, sans-serif`;
-    const text = line.uppercase ? line.text.toUpperCase() : line.text;
-    ctx.fillText(text, labelX + padding, cursorY);
-    cursorY += lineHeight;
+    ctx.font = `${line.weight} ${line.size}px Futura, "Century Gothic", Arial, sans-serif`;
+    ctx.fillText(line.text, canvasW - margin, cursorY, maxWidth);
+    cursorY += line.size + gap;
   }
+  ctx.restore();
 }
 
 export function downloadBlob(blob: Blob, filename: string) {

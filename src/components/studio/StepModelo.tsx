@@ -1,3 +1,4 @@
+import { StorageImage } from '@/components/StorageImage';
 import { User, Users } from 'lucide-react';
 import type { Modelo } from '@/types';
 
@@ -69,8 +70,9 @@ function ModeloGroup({
             }`}
           >
             <div className="aspect-square bg-sand-100 rounded-sm mb-3 overflow-hidden flex items-center justify-center">
-              {m.retrato_url ? (
-                <img src={m.retrato_url} alt={m.nome} className="w-full h-full object-cover" />
+              {m.retrato_path || m.retrato_url ? (
+                <StorageImage bucket="modelos-referencias" path={m.retrato_path} legacyUrl={m.retrato_url}
+                  alt={m.nome} className="w-full h-full object-cover" />
               ) : (
                 <div className="flex flex-col items-center justify-center text-clay-300">
                   <User className="w-8 h-8" />
