@@ -344,34 +344,61 @@ function drawLabelOnCanvas(
   label: LabelData
 ) {
   const scale = canvasW / 1024;
-  const padding = 24 * scale;
-  const lineHeight = 20 * scale;
-  const titleSize = 24 * scale;
-  const bodySize = 14 * scale;
+  const margin = 38 * scale;
+  const titleSize = 23 * scale;
+  const bodySize = 15 * scale;
+  const lineHeight = 23 * scale;
 
-  const lines: { text: string; size: number; uppercase: boolean }[] = [
-    { text: label.nome, size: titleSize, uppercase: true },
-  ];
-  if (label.tipo) lines.push({ text: label.tipo, size: bodySize, uppercase: false });
-  if (label.medidas) lines.push({ text: `Medidas: ${label.medidas}`, size: bodySize, uppercase: false });
-  if (label.cordao) lines.push({ text: `Cordão: ${label.cordao}`, size: bodySize, uppercase: false });
+  const lines = [
+    { text: label.nome, size: titleSize, title: true },
+    ...(label.tipo
+      ? [{ text: label.tipo, size: bodySize, title: false }]
+      : []),
+    ...(label.medidas
+      ? [{ text: `Medidas: ${label.medidas}`, size: bodySize, title: false }]
+      : []),
+    ...(label.cordao
+      ? [{ text: `Cordão: ${label.cordao}`, size: bodySize, title: false }]
+      : []),
+  ].filter(line => line.text.trim());
 
-  const labelHeight = padding * 2 + lineHeight * lines.length;
-  const labelY = canvasH - labelHeight;
-  const labelWidth = Math.min(canvasW * 0.5, 460 * scale);
-  const labelX = canvasW - labelWidth - padding;
+  if (!lines.length) return;
 
-  ctx.fillStyle = '#786554';
-  ctx.fillRect(labelX, labelY, labelWidth, labelHeight);
+  const totalHeight =
+    titleSize +
+    Math.max(0, lines.length - 1) * lineHeight +
+    8 * scale;
+
+  const startX = margin;
+  let cursorY = canvasH - margin - totalHeight;
+
+  ctx.save();
 
   ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
 
-  let cursorY = labelY + padding;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+  ctx.shadowBlur = 5 * scale;
+  ctx.shadowOffsetX = 1 * scale;
+  ctx.shadowOffsetY = 2 * scale;
+
   for (const line of lines) {
-    ctx.font = `${line.uppercase ? 'bold' : 'normal'} ${line.size}px Inter, sans-serif`;
-    const text = line.uppercase ? line.text.toUpperCase() : line.text;
-    ctx.fillText(text, labelX + padding, cursorY);
-    cursorY += lineHeight;
+    ctx.font = line.title
+      ? `300 ${line.size}px Futura, "Century Gothic", Arial, sans-serif`
+      : `300 ${line.size}px Futura, "Century Gothic", Arial, sans-serif`;
+
+    ctx.fillText(
+      line.text,
+      startX,
+      cursorY,
+      canvasW - margin * 2
+    );
+
+    cursorY += line.title
+      ? 32 * scale
+      : lineHeight;
   }
+
+  ctx.restore();
 }
